@@ -1,0 +1,98 @@
+node {
+	try {
+        notifyBuild('STARTED')
+					def app
+					def application = 'user'
+		  		def environment = 'staging1'
+		  		def kubernetes_namespace = 'staging1'
+			stage('Clone repository') {
+				checkout scm
+			}
+
+			stage('Build image') {
+				sh 'rm Gemfile.lock'
+				app = docker.build("${application}_${environment}")
+			}
+
+			stage('Test image') {
+				app.withRun('-p 9297:9297') {c ->
+        		sh """sleep 30;status=`curl -I localhost:9297/user_ms/healthcheck | grep '200 OK' | wc -l`;if [ \$status -ge 1 ];then echo 'Tested Successfully' ;else exit 1;fi"""
+        		}
+			}
+
+			stage('Push image') {
+				docker.withRegistry('https://201991143742.dkr.ecr.ap-southeast-1.amazonaws.com', 'ecr:ap-southeast-1:ecr-repository-credentials') {
+					app.push("${kubernetes_namespace}_${env.BUILD_NUMBER}")
+					app.push("latest")
+				}
+			}
+			
+			stage ('Pull image') {
+			      //sh "ssh ubuntu@ 'docker pull 201991143742.dkr.ecr.ap-southeast-1.amazonaws.com/${application}_${environment}:${kubernetes_namespace}_${env.BUILD_NUMBER}'"
+				}
+			
+			stage('Deploy') {
+				notifyBuild('Deploy Stage Started')
+				sh "ssh ubuntu@ 'kubectl get pods'"
+				sh "ssh ubuntu@ 'kubectl config set-context kubernetes.embibe.com'"
+				sh "ssh ubuntu@ 'kubectl set image deployment/${application}-microservice ${application}-microservice-container=201991143742.dkr.ecr.ap-southeast-1.amazonaws.com/${application}_${environment}:${kubernetes_namespace}_${env.BUILD_NUMBER} --record --namespace=${kubernetes_namespace}'"
+				sh "ssh ubuntu@ 'kubectl rollout status deployment/${application}-microservice -n ${kubernetes_namespace}'"
+				sh "ssh ubuntu@ 'kubectl describe deployment/${application}-microservice -n ${kubernetes_namespace}'"
+				sh "ssh ubuntu@ 'kubectl get pods -n ${kubernetes_namespace}'"
+				notifyBuild('Deploy Stage Completed Successfully !!')
+			}
+			
+			stage('Remove old images') {
+				// remove docker pld images
+				sh("docker rmi -f 201991143742.dkr.ecr.ap-southeast-1.amazonaws.com/${application}_${environment}:latest ")
+				sh("docker rmi -f 201991143742.dkr.ecr.ap-southeast-1.amazonaws.com/${application}_${environment}:${kubernetes_namespace}_${env.BUILD_NUMBER} ")
+				//sh("docker rmi -f ${application}_${environment}:${kubernetes_namespace}_${env.BUILD_NUMBER}")
+		   }
+		   
+		   stage('Notifications') {
+		   		echo 'Notification sent to build owners with deployment status !!'
+		   }
+		} catch (e) {
+			currentBuild.result = "FAILED"
+			throw e
+		} finally {
+			notifyBuild(currentBuild.result)
+		}
+	}
+	
+	def notifyBuild(String buildStatus = 'STARTED') {
+	  // build status of null means successful
+	  buildStatus =  buildStatus ?: 'SUCCESSFUL'
+
+	  // Default values
+	  def colorName = 'RED'
+	  def colorCode = '#FF0000'
+	  def subject = "${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'"
+	  def summary = "${subject} (${env.BUILD_URL})"
+	  def details = """<p>${buildStatus}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]':</p>
+		<p>Check console output at &QUOT;<a href='${env.BUILD_URL}'>${env.JOB_NAME} [${env.BUILD_NUMBER}]</a>&QUOT;</p>"""
+
+	  if (buildStatus == 'STARTED') {
+		color = 'YELLOW'
+		colorCode = '#FFFF00'
+	  } else if (buildStatus == 'SUCCESSFUL') {
+		color = 'GREEN'
+		colorCode = '#00FF00'
+	  } else {
+		color = 'RED'
+		colorCode = '#FF0000'
+	  }
+
+	  // Send notifications
+	  //slackSend (color: colorCode, message: summary)
+
+	  emailext(
+		to: '',
+		attachmentsPattern: 'target/surefire-reports/TEST-test.OtherTest.xml',
+		mimeType: 'text/html',
+		attachLog: true,
+		subject: subject,
+		body: details,
+		recipientProviders: [[$class: 'CulpritsRecipientProvider'], [$class: 'RequesterRecipientProvider']]
+		)
+	}
