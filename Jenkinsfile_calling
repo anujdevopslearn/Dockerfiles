@@ -1,7 +1,12 @@
 node {
-	stage('Loading Jenkins file') {
-        echo 'Pulling Jenkins file for branch :' + env.BRANCH_NAME
-		git([url: 'https://bitbucket.org/microservicesembibe/jenkinspipeline.git', branch: "${env.BRANCH_NAME}", credentialsId: 'test_app_master_prod'])
+    stage('Loading Jenkins file') {
+    if (env.BRANCH_NAME == 'master') {
+               echo 'Pulling Jenkins file for branch :' + env.BRANCH_NAME
+                git([url: 'https://bitbucket.org/microservicesembibe/jenkinspipeline.git', branch: "${env.BRANCH_NAME}_user", credentialsId: 'test_app_master_prod'])
+            } else {
+                echo 'Pulling Jenkins file for branch :' + env.BRANCH_NAME
+                git([url: 'https://bitbucket.org/microservicesembibe/jenkinspipeline.git', branch: "${env.BRANCH_NAME}", credentialsId: 'test_app_master_prod'])
+            } 
         load 'Jenkinsfile'
     }
 }
